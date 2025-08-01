@@ -14,11 +14,19 @@ bot = st.session_state.bot
 st.set_page_config(page_title="Handbook Bot")
 with st.sidebar:
     st.title('Handbook Bot')
+    
+    # Add a clear conversation button
+    if st.button("Clear Conversation"):
+        bot.clear_memory()
+        st.session_state.messages = [{"role": "assistant", "content": "Conversation cleared. How can I assist you today?"}]
+        st.rerun()
 
-# Function for generating LLM response
+# Function for generating LLM response using the optimized chat method
 def generate_response(input_text):
     try:
-        result = bot.rag_chain.invoke(input_text)
+        # chat method is used to generate the response 
+        # rag_chain.invoke can raise errors if inputs are missing or misformatted
+        result = bot.chat(input_text)
         return result
     except Exception as e:
         return f"Sorry, I encountered an error: {str(e)}"

@@ -12,9 +12,9 @@ This is a simple RAG Chatbot with a streamlit interface present in the interface
 - We are using OpenAI LLMs
 
 # What we aim to work on currently
-- Improve the prompt (Line 54 in main.py)
-- Add chat-history in the rag-chain so that the LLM remembers the previously asked questions
-- Improve the chunking and retreival strategies if needed
-- Switch LLMs and Embedding models if needed
+- Improve the prompt (Line 54 in main.py) - improved the prompt to give more detailed response 
+- Add chat-history in the rag-chain so that the LLM remembers the previously asked questions - added chat history using ConversationBufferMemory
+- Improve the chunking and retreival strategies if needed - improved chunking size and search kwargs for rag to 4 to get top 4 related documents
+- Switch LLMs and Embedding models if needed 
 - In future maybe use a remotely hosted VectorDB like Pinecone, ChromaDB etc.
 - Play around with input format if needed. Maybe structured format like .md can perform better.
