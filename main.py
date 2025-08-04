@@ -55,7 +55,7 @@ class ChatBot:
             print(f"FAISS index saved to {self.faiss_index_path}")
 
         # Initialize LLM
-        self.llm = OpenAI()
+        self.llm = OpenAI(model="gpt-4o")
         
     def _setup_memory(self):
         """Initialize conversation memory"""
@@ -161,4 +161,5 @@ class ChatBot:
         """Clear conversation memory"""
         self.memory.clear()
         # Reset the interaction history flag
+
         self._has_interaction_history = False
