@@ -2,7 +2,7 @@ from langchain_community.document_loaders import TextLoader
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAI
+from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
@@ -54,15 +54,24 @@ class ChatBot:
             self.docsearch.save_local(self.faiss_index_path)
             print(f"FAISS index saved to {self.faiss_index_path}")
 
-        # Initialize LLM
-        self.llm = OpenAI(model="gpt-4o")
+        # Initialize LLM with better configuration for longer responses
+        self.llm = ChatOpenAI(
+            model="gpt-4o",
+            max_tokens=None,
+            timeout=None,
+            temperature=0.1,
+            max_retries=2,
+            api_key=os.getenv("OPENAI_API_KEY")
+        )
+             # Increase timeout for longer response)
         
     def _setup_memory(self):
         """Initialize conversation memory"""
         self.memory = ConversationBufferMemory(
             memory_key="chat_history",
             return_messages=True,
-            input_key="question"
+            input_key="question",
+            output_key="output"
         )
         # Track if this is the first interaction to avoid unnecessary memory loading
         self._has_interaction_history = False
@@ -71,13 +80,13 @@ class ChatBot:
         #prompt for accuracy and detail
         template = """
         You are a knowledgeable HR assistant specializing in company policies and procedures. 
-        When answering questions, provide detailed, specific information including:
+        When answering questions, provide comprehensive, detailed information including:
         - Exact policy requirements and procedures
         - Specific deadlines, timeframes, and important dates
         - Required forms, documents, or steps
         - Contact information or responsible parties
         - Any conditions, exceptions, or special circumstances
-        - Policy section references when available
+        - Policy section references when available, do not include the id or vector id of the document
         
         If the context doesn't contain enough information to answer completely, say so clearly.
         Always be thorough and precise in your responses.
@@ -96,7 +105,7 @@ class ChatBot:
         #runnablelambda is used to add the chat history section to the input
         self.rag_chain = (
             RunnableLambda(lambda x: {
-                            "context": self.docsearch.as_retriever(search_kwargs={"k": 4}).invoke(x["question"]),
+                            "context": "\n\n".join([doc.page_content for doc in self.docsearch.as_retriever(search_kwargs={"k": 4}).invoke(x["question"])]),
                             "question": x["question"],
                             "chat_history_section": x["chat_history_section"]
                             })
@@ -133,11 +142,24 @@ class ChatBot:
             # Format history as readable string
             chat_history_section = ""
             for msg in chat_history:
-                if hasattr(msg, "type") and msg.type == "human":
-                    chat_history_section += f"User: {msg.content}\n"
-                elif hasattr(msg, "type") and msg.type == "ai":
-                    chat_history_section += f"Assistant: {msg.content}\n"
+                # Handle different message types from ChatOpenAI
+                if hasattr(msg, "type"):
+                    if msg.type == "human":
+                        chat_history_section += f"User: {msg.content}\n"
+                    elif msg.type == "ai":
+                        chat_history_section += f"Assistant: {msg.content}\n"
+                    else:
+                        chat_history_section += f"{msg.content}\n"
+                elif hasattr(msg, "role"):
+                    # Handle ChatMessage format
+                    if msg.role == "user":
+                        chat_history_section += f"User: {msg.content}\n"
+                    elif msg.role == "assistant":
+                        chat_history_section += f"Assistant: {msg.content}\n"
+                    else:
+                        chat_history_section += f"{msg.content}\n"
                 else:
+                    # Fallback for other message formats
                     chat_history_section += f"{msg.content}\n"
             chat_history_section = f"Previous conversation:\n{chat_history_section}"
         else:
@@ -161,5 +183,4 @@ class ChatBot:
         """Clear conversation memory"""
         self.memory.clear()
         # Reset the interaction history flag
-
         self._has_interaction_history = False
