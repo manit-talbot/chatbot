@@ -8,6 +8,7 @@ from langchain.schema.runnable import RunnablePassthrough
 from langchain.schema.output_parser import StrOutputParser
 from langchain.memory import ConversationBufferMemory
 from langchain.schema.runnable import RunnableLambda
+from langchain_community.document_loaders import UnstructuredMarkdownLoader
 from dotenv import load_dotenv
 import os
 
@@ -40,30 +41,94 @@ class ChatBot:
             )
         else:
             print("Creating new FAISS index...")
-            # Load and process documents
-            loader = TextLoader('docs-text/handbook.txt')
-            documents = loader.load()
-            # Split the documents into 2000 character chunks with 200 character overlap
-            text_splitter = CharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-            self.docs = text_splitter.split_documents(documents)
-
-            # Create FAISS vector store from documents
-            self.docsearch = FAISS.from_documents(self.docs, self.embeddings)
-
-            # Save the FAISS index locally
-            self.docsearch.save_local(self.faiss_index_path)
-            print(f"FAISS index saved to {self.faiss_index_path}")
+            # Load and process all documents from docs-text directory
+            self._create_faiss_index_from_directory()
 
         # Initialize LLM with better configuration for longer responses
         self.llm = ChatOpenAI(
             model="gpt-4o",
-            max_tokens=None,
-            timeout=None,
+            max_tokens=2000,
+            timeout=60,
             temperature=0.1,
             max_retries=2,
             api_key=os.getenv("OPENAI_API_KEY")
         )
              # Increase timeout for longer response)
+        
+    def _create_faiss_index_from_directory(self, docs_directory="docs-text"):
+        """
+        Create FAISS index from all text and markdown files in the specified directory
+        """
+        # Get all text and markdown files in the directory
+        text_files = [f for f in os.listdir(docs_directory) if f.endswith('.txt')]
+        markdown_files = [f for f in os.listdir(docs_directory) if f.endswith('.md')]
+        all_files = text_files + markdown_files
+        
+        if not all_files:
+            print(f"No text or markdown files found in {docs_directory}")
+            # Create empty index as fallback
+            self.docsearch = FAISS.from_documents([], self.embeddings)
+            self.docsearch.save_local(self.faiss_index_path)
+            return
+        
+        print(f"Found {len(text_files)} text files and {len(markdown_files)} markdown files to process")
+        
+        # Load and combine all documents
+        all_docs = []
+        text_splitter = CharacterTextSplitter(
+            chunk_size=1500,
+            chunk_overlap=200,
+            separator = "\n\n"
+            )
+        
+        # Process text files
+        for text_file in text_files:
+            file_path = os.path.join(docs_directory, text_file)
+            print(f"Processing text file: {text_file}...")
+            
+            try:
+                loader = TextLoader(file_path)
+                documents = loader.load()
+                
+                # Split documents
+                split_docs = text_splitter.split_documents(documents)
+                all_docs.extend(split_docs)
+                
+                print(f"Added {len(split_docs)} chunks from {text_file}")
+                
+            except Exception as e:
+                print(f"Error processing {text_file}: {str(e)}")
+        
+        # Process markdown files
+        for markdown_file in markdown_files:
+            file_path = os.path.join(docs_directory, markdown_file)
+            print(f"Processing markdown file: {markdown_file}...")
+            
+            try:
+                loader = UnstructuredMarkdownLoader(file_path)
+                documents = loader.load()
+                
+                # Split documents
+                split_docs = text_splitter.split_documents(documents)
+                all_docs.extend(split_docs)
+                
+                print(f"Added {len(split_docs)} chunks from {markdown_file}")
+                
+            except Exception as e:
+                print(f"Error processing {markdown_file}: {str(e)}")
+        
+        if not all_docs:
+            print("No documents were successfully loaded")
+            # Create empty index as fallback
+            self.docsearch = FAISS.from_documents([], self.embeddings)
+        else:
+            print(f"Total chunks to index: {len(all_docs)}")
+            # Create FAISS vector store from documents
+            self.docsearch = FAISS.from_documents(all_docs, self.embeddings)
+        
+        # Save the FAISS index locally
+        self.docsearch.save_local(self.faiss_index_path)
+        print(f"FAISS index saved to {self.faiss_index_path}")
         
     def _setup_memory(self):
         """Initialize conversation memory"""
@@ -71,7 +136,8 @@ class ChatBot:
             memory_key="chat_history",
             return_messages=True,
             input_key="question",
-            output_key="output"
+            output_key="output",
+            k=8 # Keep more context 
         )
         # Track if this is the first interaction to avoid unnecessary memory loading
         self._has_interaction_history = False
@@ -86,8 +152,9 @@ class ChatBot:
         - Required forms, documents, or steps
         - Contact information or responsible parties
         - Any conditions, exceptions, or special circumstances
-        - Policy section references when available, do not include the id or vector id of the document
+        - Policy section references when available.
         
+        IMPORTANT: For health-related policies, always prioritize accuracy and completeness over brevity.
         If the context doesn't contain enough information to answer completely, say so clearly.
         Always be thorough and precise in your responses.
         
@@ -99,13 +166,15 @@ class ChatBot:
         Detailed Answer:
         """
         #prompt template for the rag chain
-        self.prompt = PromptTemplate(template=template, input_variables=["context", "question", "chat_history_section"])
+        self.prompt = PromptTemplate(
+            template=template,
+            input_variables=["context", "question", "chat_history_section"])
 
         #rag chain retreives top 4 relevant documents from the FAISS index
         #runnablelambda is used to add the chat history section to the input
         self.rag_chain = (
             RunnableLambda(lambda x: {
-                            "context": "\n\n".join([doc.page_content for doc in self.docsearch.as_retriever(search_kwargs={"k": 4}).invoke(x["question"])]),
+                            "context": "\n\n".join([doc.page_content for doc in self.docsearch.as_retriever(search_kwargs={"k": 5}).invoke(x["question"])]),
                             "question": x["question"],
                             "chat_history_section": x["chat_history_section"]
                             })
@@ -119,20 +188,17 @@ class ChatBot:
         Method to update the FAISS index when documents change
         """
         if new_documents_path:
-            loader = TextLoader(new_documents_path)
+            # If a specific document is provided, check if it's in docs-text directory
+            if os.path.exists(new_documents_path):
+                print(f"Document {new_documents_path} found. Rebuilding index with all documents...")
+                self._create_faiss_index_from_directory()
+                print(f"FAISS index updated and saved to {self.faiss_index_path}")
+            else:
+                print(f"Document {new_documents_path} not found. Please place it in the docs-text directory.")
         else:
-            loader = TextLoader('handbook.txt')
-
-        documents = loader.load()
-        text_splitter = CharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-        docs = text_splitter.split_documents(documents)
-
-        # Recreate the FAISS index
-        self.docsearch = FAISS.from_documents(docs, self.embeddings)
-
-        # Save the updated index
-        self.docsearch.save_local(self.faiss_index_path)
-        print(f"FAISS index updated and saved to {self.faiss_index_path}")
+            # Rebuild index from all documents in docs-text directory
+            self._create_faiss_index_from_directory()
+            print(f"FAISS index updated and saved to {self.faiss_index_path}")
 
     def chat(self, question):
         """Chat method that maintains conversation history"""

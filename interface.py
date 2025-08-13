@@ -11,9 +11,9 @@ if "bot" not in st.session_state:
 
 bot = st.session_state.bot
 
-st.set_page_config(page_title="Handbook Bot")
+st.set_page_config(page_title="Handbook & Manual Bot")
 with st.sidebar:
-    st.title('Handbook Bot')
+    st.title('Handbook & Manual Bot')
     
     # Add a clear conversation button
     if st.button("Clear Conversation"):
@@ -49,7 +49,7 @@ if input_text := st.chat_input():
 # Generate a new response if last message is not from assistant
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
-        with st.spinner("Getting your answer from handbook.."):
+        with st.spinner("Getting your answer from documents.."):
             response = generate_response(input_text)
             st.write(response)
     message = {"role": "assistant", "content": response}

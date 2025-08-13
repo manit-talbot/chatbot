@@ -18,3 +18,23 @@ This is a simple RAG Chatbot with a streamlit interface present in the interface
 - Switch LLMs and Embedding models if needed 
 - In future maybe use a remotely hosted VectorDB like Pinecone, ChromaDB etc.
 - Play around with input format if needed. Maybe structured format like .md can perform better.
+
+# FAISS index:
+- Processed both `handbook.txt` and `BH_Manual_1.27_Aug_2024_final.md`
+- Create embeddings for all content
+- Build a new FAISS index with both documents
+- Save the index to faiss_index
+
+1. Text File Processing: `handbook.txt` is loaded using `TextLoader`
+2. Markdown File Processing: `BH_Manual_1.27_Aug_2024_final.md` is loaded using `UnstructuredMarkdownLoader`
+3. Chunking: Both files are split into 1500-character chunks with 200-character overlap
+4. Embedding: All chunks are converted to vector embeddings using OpenAI
+5. Indexing: FAISS creates a searchable index from all embeddings
+6. chatbot can now answer questions from both documents
+
+To add more files in the future:
+
+1. Place new `.txt` or `.md` files in the `docs-text/` directory
+2. Run rebuild_index.py
+3. Restart your chatbot
+
