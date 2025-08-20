@@ -2,7 +2,7 @@ langchain-community
 langchain-openai
 openai
 python-dotenv
-faiss-cpu-
+faiss-cpu
 pydantic
 streamlit
 unstructured
