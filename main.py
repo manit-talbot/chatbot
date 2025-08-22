@@ -11,6 +11,7 @@ from langchain.schema.runnable import RunnableLambda
 from langchain_community.document_loaders import UnstructuredMarkdownLoader
 from dotenv import load_dotenv
 import os
+import shutil
 
 #ChatBot class is used to initialize the components and setup the memory and rag chain
 class ChatBot:
@@ -30,15 +31,28 @@ class ChatBot:
         # Define the path for the FAISS index
         self.faiss_index_path = "faiss_index"
 
-        # Check if FAISS index already exists locally
-        if os.path.exists(self.faiss_index_path):
+        # Check if FAISS index already exists locally and has the required files
+        index_faiss_path = os.path.join(self.faiss_index_path, "index.faiss")
+        index_pkl_path = os.path.join(self.faiss_index_path, "index.pkl")
+        
+        if os.path.exists(self.faiss_index_path) and os.path.exists(index_faiss_path) and os.path.exists(index_pkl_path):
             print("Loading existing FAISS index...")
-            # Load the existing FAISS index
-            self.docsearch = FAISS.load_local(
-                self.faiss_index_path,
-                self.embeddings,
-                allow_dangerous_deserialization=True
-            )
+            try:
+                # Load the existing FAISS index
+                self.docsearch = FAISS.load_local(
+                    self.faiss_index_path,
+                    self.embeddings,
+                    allow_dangerous_deserialization=True
+                )
+                print("Successfully loaded existing FAISS index")
+            except Exception as e:
+                print(f"Error loading existing FAISS index: {str(e)}")
+                print("Creating new FAISS index...")
+                # Remove corrupted index directory
+                if os.path.exists(self.faiss_index_path):
+                    shutil.rmtree(self.faiss_index_path)
+                # Load and process all documents from docs-text directory
+                self._create_faiss_index_from_directory()
         else:
             print("Creating new FAISS index...")
             # Load and process all documents from docs-text directory
@@ -60,9 +74,9 @@ class ChatBot:
         Create FAISS index from all text and markdown files in the specified directory
         """
         # Get all text and markdown files in the directory
-        text_files = [f for f in os.listdir(docs_directory) if f.endswith('.txt')]
+        #text_files = [f for f in os.listdir(docs_directory) if f.endswith('.txt')]
         markdown_files = [f for f in os.listdir(docs_directory) if f.endswith('.md')]
-        all_files = text_files + markdown_files
+        all_files = markdown_files #text_files + 
         
         if not all_files:
             print(f"No text or markdown files found in {docs_directory}")
@@ -71,7 +85,8 @@ class ChatBot:
             self.docsearch.save_local(self.faiss_index_path)
             return
         
-        print(f"Found {len(text_files)} text files and {len(markdown_files)} markdown files to process")
+        #print(f"Found {len(text_files)} text files and {len(markdown_files)} markdown files to process")
+        print(f"Found {len(markdown_files)} markdown files to process")
         
         # Load and combine all documents
         all_docs = []
@@ -82,6 +97,7 @@ class ChatBot:
             )
         
         # Process text files
+        '''
         for text_file in text_files:
             file_path = os.path.join(docs_directory, text_file)
             print(f"Processing text file: {text_file}...")
@@ -98,6 +114,7 @@ class ChatBot:
                 
             except Exception as e:
                 print(f"Error processing {text_file}: {str(e)}")
+        '''
         
         # Process markdown files
         for markdown_file in markdown_files:
@@ -231,6 +248,18 @@ class ChatBot:
         else:
             chat_history_section = "This is the first question in our conversation."
 
+        # Get relevant documents first with similarity scores
+        retriever = self.docsearch.as_retriever(search_kwargs={"k": 5})
+        relevant_docs = retriever.invoke(question)
+        
+        # Get documents with scores using similarity search
+        docs_with_scores = self.docsearch.similarity_search_with_score(question, k=5)
+        
+        # Add scores to the documents
+        for i, (doc, score) in enumerate(docs_with_scores):
+            if i < len(relevant_docs):
+                relevant_docs[i].metadata['score'] = score
+        
         # Prepare input for the RAG chain
         inputs = {
             "question": question,
@@ -243,7 +272,36 @@ class ChatBot:
         # Save the new exchange to memory
         self.memory.save_context({"question": question}, {"output": response})
 
-        return response
+        # Return both response and relevant documents
+        return {
+            "response": response,
+            "relevant_docs": relevant_docs
+        }
+
+    def get_relevant_docs_info(self, docs):
+        """Format relevant documents information for display"""
+        docs_info = []
+        for i, doc in enumerate(docs, 1):
+            # Extract source file name from metadata
+            source = doc.metadata.get('source', 'Unknown source')
+            # Get just the filename without the full path
+            filename = os.path.basename(source) if source != 'Unknown source' else source
+            
+            # Get a preview of the content (first 200 characters)
+            content_preview = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+            
+            # Get similarity score if available
+            #similarity_score = getattr(doc, 'metadata', {}).get('score', 'N/A')
+            
+            docs_info.append({
+                "number": i,
+                "filename": filename,
+                "content_preview": content_preview,
+                "full_content": doc.page_content,
+                "source": source,
+                #"similarity_score": similarity_score
+            })
+        return docs_info
          
     def clear_memory(self):
         """Clear conversation memory"""

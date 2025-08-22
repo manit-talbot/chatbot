@@ -20,6 +20,11 @@ with st.sidebar:
         bot.clear_memory()
         st.session_state.messages = [{"role": "assistant", "content": "Conversation cleared. How can I assist you today?"}]
         st.rerun()
+    
+    # Add toggle for showing sources
+    st.markdown("---")
+    st.markdown("**Settings:**")
+    show_sources = st.checkbox("Show relevant sources", value=True, help="Display the source documents used to generate each response")
 
 # Function for generating LLM response using the optimized chat method
 def generate_response(input_text):
@@ -29,7 +34,7 @@ def generate_response(input_text):
         result = bot.chat(input_text)
         return result
     except Exception as e:
-        return f"Sorry, I encountered an error: {str(e)}"
+        return {"response": f"Sorry, I encountered an error: {str(e)}", "relevant_docs": []}
 
 # Store LLM generated responses
 if "messages" not in st.session_state.keys():
@@ -50,7 +55,45 @@ if input_text := st.chat_input():
 if st.session_state.messages[-1]["role"] != "assistant":
     with st.chat_message("assistant"):
         with st.spinner("Getting your answer from documents.."):
-            response = generate_response(input_text)
+            result = generate_response(input_text)
+            
+            # Handle both old string format and new dict format for backward compatibility
+            if isinstance(result, dict):
+                response = result["response"]
+                relevant_docs = result.get("relevant_docs", [])
+            else:
+                response = result
+                relevant_docs = []
+            
             st.write(response)
-    message = {"role": "assistant", "content": response}
+            
+            # Display relevant documents if available and toggle is enabled
+            if relevant_docs and show_sources:
+                st.markdown("---")
+                st.markdown("**📚 Relevant Sources:**")
+                
+                # Format and display relevant documents
+                docs_info = bot.get_relevant_docs_info(relevant_docs)
+                
+                # Show a summary of sources first
+                source_files = list(set([doc_info['filename'] for doc_info in docs_info]))
+                st.info(f"Found {len(relevant_docs)} relevant chunks from: {', '.join(source_files)}")
+                
+                for doc_info in docs_info:
+                    with st.expander(f"📄 {doc_info['filename']} (Source {doc_info['number']})"):
+                        st.markdown(f"**Content Preview:**")
+                        st.text(doc_info['content_preview'])
+                        st.markdown(f"**Full Content:**")
+                        st.text(doc_info['full_content'])
+                        st.markdown(f"**Source:** `{doc_info['source']}`")
+                       # if doc_info['similarity_score'] != 'N/A':
+                        #    st.markdown(f"**Relevance Score:** {doc_info['similarity_score']:.3f}")
+    
+    # Store the response text in messages (not the full result dict)
+    if isinstance(result, dict):
+        message_content = result["response"]
+    else:
+        message_content = result
+    
+    message = {"role": "assistant", "content": message_content}
     st.session_state.messages.append(message)

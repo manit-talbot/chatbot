@@ -24,15 +24,15 @@ def rebuild_faiss_index():
     faiss_index_path = "faiss_index"
     
     # Get all text and markdown files in the directory
-    text_files = [f for f in os.listdir(docs_directory) if f.endswith('.txt')]
+    #text_files = [f for f in os.listdir(docs_directory) if f.endswith('.txt')]
     markdown_files = [f for f in os.listdir(docs_directory) if f.endswith('.md')]
-    all_files = text_files + markdown_files
+    all_files =  markdown_files #text_files +
     
     if not all_files:
         print(f"No text or markdown files found in {docs_directory}")
         return False
     
-    print(f"Found {len(text_files)} text files and {len(markdown_files)} markdown files to process")
+    #print(f"Found {len(text_files)} text files and {len(markdown_files)} markdown files to process")
     
     # Load and combine all documents
     all_docs = []
@@ -43,6 +43,7 @@ def rebuild_faiss_index():
             )
     
     # Process text files
+    '''
     for text_file in text_files:
         file_path = os.path.join(docs_directory, text_file)
         print(f"Processing text file: {text_file}...")
@@ -59,6 +60,7 @@ def rebuild_faiss_index():
             
         except Exception as e:
             print(f"Error processing {text_file}: {str(e)}")
+     '''
     
     # Process markdown files
     for markdown_file in markdown_files:
