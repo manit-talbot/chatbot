@@ -11,9 +11,9 @@ if "bot" not in st.session_state:
 
 bot = st.session_state.bot
 
-st.set_page_config(page_title="Handbook & Manual Bot")
+st.set_page_config(page_title="Employee Assistant")
 with st.sidebar:
-    st.title('Handbook & Manual Bot')
+    st.title('Employee Assistant')
     
     # Add a clear conversation button
     if st.button("Clear Conversation"):
