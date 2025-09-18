@@ -4,3 +4,5 @@ venv/
 handbook/
 db/
 conversation_history/
+logs/
+crewai-rag-tool.lock

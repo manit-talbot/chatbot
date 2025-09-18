@@ -6,3 +6,7 @@ faiss-cpu
 pydantic
 streamlit
 unstructured
+crewai
+crewai-tools
+psycopg2-binary
+embedchain[postgres]
