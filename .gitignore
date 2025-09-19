@@ -6,3 +6,4 @@ db/
 conversation_history/
 logs/
 crewai-rag-tool.lock
+chat-keypair.pem

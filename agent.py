@@ -7,6 +7,9 @@ import os
 from dotenv import load_dotenv
 import glob
 import logging
+import boto3
+from boto3.dynamodb.conditions import Key
+import uuid
 
 load_dotenv()
 
@@ -14,6 +17,10 @@ DB_URI = os.getenv("POSTGRES_URI")
 DEFAULT_SCHEMA = os.getenv("DEFAULT_SCHEMA", "public")
 DOCS_DIR = os.getenv("DOCS_DIR")
 KB_ID = os.getenv("KB_ID")
+
+# DynamoDB configuration
+DYNAMODB_TABLE_NAME = os.getenv("DYNAMODB_TABLE_NAME", "chatbot-conversations")
+AWS_REGION = os.getenv("AWS_REGION", "us-west-2")
 
 # Setup logging
 def setup_logging():
@@ -59,7 +66,107 @@ logger.info("Logger initialized successfully")
 
 logger.info(f"Environment loaded - DB_URI: {'Set' if DB_URI else 'Not set'}")
 logger.info(f"Default Schema: {DEFAULT_SCHEMA}")
+logger.info(f"DynamoDB Table: {DYNAMODB_TABLE_NAME}")
+logger.info(f"AWS Region: {AWS_REGION}")
 #logger.info(f"Docs Directory: {DOCS_DIR}")
+
+# Initialize DynamoDB
+dynamodb = boto3.resource('dynamodb', region_name=AWS_REGION)
+conversation_table = dynamodb.Table(DYNAMODB_TABLE_NAME)
+
+# DynamoDB helper functions
+def create_conversation_table():
+    """Create DynamoDB table for conversation history"""
+    try:
+        logger.info(f"Creating DynamoDB table: {DYNAMODB_TABLE_NAME}")
+        
+        table = dynamodb.create_table(
+            TableName=DYNAMODB_TABLE_NAME,
+            KeySchema=[
+                {
+                    'AttributeName': 'session_id',
+                    'KeyType': 'HASH'  # Partition key
+                },
+                {
+                    'AttributeName': 'timestamp',
+                    'KeyType': 'RANGE'  # Sort key
+                }
+            ],
+            AttributeDefinitions=[
+                {
+                    'AttributeName': 'session_id',
+                    'AttributeType': 'S'
+                },
+                {
+                    'AttributeName': 'timestamp',
+                    'AttributeType': 'S'
+                }
+            ],
+            BillingMode='PAY_PER_REQUEST'  # On-demand billing
+        )
+        
+        # Wait for table to be created
+        table.wait_until_exists()
+        logger.info(f"Table {DYNAMODB_TABLE_NAME} created successfully")
+        return True
+        
+    except dynamodb.meta.client.exceptions.ResourceInUseException:
+        logger.info(f"Table {DYNAMODB_TABLE_NAME} already exists")
+        return True
+    except Exception as e:
+        logger.error(f"Error creating table: {e}")
+        return False
+
+def save_conversation_to_dynamodb(session_id, user_question, ai_response):
+    """Save conversation exchange to DynamoDB"""
+    try:
+        timestamp = datetime.now().isoformat()
+        
+        item = {
+            'session_id': session_id,
+            'timestamp': timestamp,
+            'user_question': user_question,
+            'ai_response': ai_response,
+            'ttl': int(datetime.now().timestamp()) + (30 * 24 * 60 * 60)  # 30 days TTL
+        }
+        
+        conversation_table.put_item(Item=item)
+        logger.info(f"Conversation saved to DynamoDB - Session: {session_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving conversation to DynamoDB: {e}")
+        return False
+
+def get_conversation_history_from_dynamodb(session_id, limit=10):
+    """Get conversation history from DynamoDB for a session"""
+    try:
+        response = conversation_table.query(
+            KeyConditionExpression=Key('session_id').eq(session_id),
+            ScanIndexForward=False,  # Get most recent first
+            Limit=limit
+        )
+        
+        conversations = []
+        for item in response['Items']:
+            conversations.append({
+                'timestamp': item['timestamp'],
+                'user': item['user_question'],
+                'ai': item['ai_response']
+            })
+        
+        # Reverse to get chronological order
+        conversations.reverse()
+        logger.info(f"Retrieved {len(conversations)} conversations from DynamoDB")
+        return conversations
+        
+    except Exception as e:
+        logger.error(f"Error retrieving conversation history: {e}")
+        return []
+
+# Create table if it doesn't exist
+create_conversation_table()
+
 
 # Database configuration
 DATABASE_NAME = "talbotdevv1"
@@ -74,7 +181,7 @@ AVAILABLE_TABLES = [
 ]
 
 # Initialize tools once
-logger.info("Initializing RAG tool...")
+#logger.info("Initializing RAG tool...")
 '''
 rag_tool = RagTool()
 try:
@@ -82,7 +189,7 @@ try:
         rag_tool.add(data_type="directory", source=DOCS_DIR)
         logger.info(f"Successfully added docs directory: {DOCS_DIR}")
         print("Successfully added docs-text directory to RAG tool")
-    else:
+        else:
         logger.warning(f"Docs directory not found: {DOCS_DIR}")
         print("docs-text directory not found")
 except Exception as e:
@@ -212,7 +319,7 @@ def create_sql_agent():
             """,
             tools=[nl2sql_tool],
             verbose=False,
-            allow_delegation=False,
+        allow_delegation=False,
             llm_config={
                 "temperature": 0.0,
             }
@@ -296,7 +403,7 @@ def create_sql_task(user_question: str, conversation_history: list = None, agent
     return Task(
         description=f"""
         Answer this question by querying the database using SQL.
-        
+
         User Question: "{user_question}"
         {context}
 
@@ -345,9 +452,13 @@ def run_knowledge_assistant():
     print("Ask me anything about your documents or database.")
     print("Type 'exit' to quit.\n")
 
-    os.makedirs("conversation_history", exist_ok=True)
-    conversation_history = []
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Generate unique session ID
+    session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{str(uuid.uuid4())[:8]}"
+    logger.info(f"Starting new conversation session: {session_id}")
+    
+    # Load conversation history from DynamoDB
+    conversation_history = get_conversation_history_from_dynamodb(session_id)
+    logger.info(f"Loaded {len(conversation_history)} previous conversations for session")
 
     while True:
         user_question = input("\nYou: ")
@@ -419,44 +530,46 @@ def run_knowledge_assistant():
                     logger.info(f"Agent {i+1}: {agent.role}")
                 
                 # Run crew
-                crew = Crew(
+            crew = Crew(
                     agents=agents,
                     tasks=tasks,
-                    verbose=False,
+                verbose=False,
                     process=Process.sequential
-                )
+            )
 
-                logger.info("Starting crew execution...")
-                crew_output = crew.kickoff()
-                logger.info("Crew execution completed")
-                
-                if hasattr(crew_output, 'raw_output'):
-                    result_str = crew_output.raw_output
-                    logger.info("Using raw_output from crew result")
-                elif hasattr(crew_output, 'result'):
-                    result_str = crew_output.result
-                    logger.info("Using result from crew output")
-                else:
-                    result_str = str(crew_output)
-                    logger.info("Using string representation of crew output")
+            logger.info("Starting crew execution...")
+            crew_output = crew.kickoff()
+            logger.info("Crew execution completed")
+
+            if hasattr(crew_output, 'raw_output'):
+                result_str = crew_output.raw_output
+                logger.info("Using raw_output from crew result")
+            elif hasattr(crew_output, 'result'):
+                result_str = crew_output.result
+                logger.info("Using result from crew output")
+            else:
+                result_str = str(crew_output)
+                logger.info("Using string representation of crew output")
 
         except Exception as e:
             result_str = f"Error processing your question: {str(e)}"
 
         print(f"\nAI: {result_str}")
-        # Save to conversation history
+        
+        # Save conversation to DynamoDB
+        save_success = save_conversation_to_dynamodb(session_id, user_question, result_str)
+        if save_success:
+            logger.info("Conversation saved to DynamoDB successfully")
+        else:
+            logger.error("Failed to save conversation to DynamoDB")
+        
+        # Add to local conversation history for context
         exchange = {
             "timestamp": datetime.now().isoformat(),
             "user": user_question,
             "ai": result_str
         }
-
         conversation_history.append(exchange)
-
-        # Save conversation to file
-        history_file = f"conversation_history/knowledge_session_{session_id}.json"
-        with open(history_file, 'w') as f:
-            json.dump(conversation_history, f, indent=2)
 
         print("\n" + "-" * 50)
 
@@ -480,5 +593,5 @@ def test_nl2sql_tool():
 # Main execution
 if __name__ == "__main__":
     # Uncomment the next line to test the NL2SQL tool
-    #test_nl2sql_tool()
+    # test_nl2sql_tool()
     run_knowledge_assistant()

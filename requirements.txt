@@ -10,3 +10,6 @@ crewai
 crewai-tools
 psycopg2-binary
 embedchain[postgres]
+fastapi
+uvicorn[standard]
+boto3
